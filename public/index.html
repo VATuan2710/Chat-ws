@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="vi">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>WebSocket Chat</title>
+		<style>
+			:root {
+				--bg: #0b1220;
+				--panel: #131a2a;
+				--muted: #9fb0d9;
+				--text: #e7eeff;
+				--accent: #6ee7b7;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter,
+					"Helvetica Neue", Arial;
+				background: linear-gradient(
+					180deg,
+					#0b1220,
+					#0e1627 40%,
+					#0b1220
+				);
+				color: var(--text);
+				min-height: 100vh;
+				display: grid;
+				place-items: center;
+				padding: 24px;
+			}
+			.app {
+				width: 100%;
+				max-width: 980px;
+				display: grid;
+				grid-template-columns: 260px 1fr;
+				gap: 16px;
+			}
+			.card {
+				background: var(--panel);
+				border: 1px solid #202a44;
+				border-radius: 16px;
+				overflow: hidden;
+				box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+			}
+			.left {
+				display: flex;
+				flex-direction: column;
+			}
+			.left header,
+			.right header {
+				padding: 14px 16px;
+				border-bottom: 1px solid #1f2740;
+				font-weight: 600;
+				color: var(--muted);
+			}
+			.users {
+				padding: 8px 8px 12px;
+				display: grid;
+				gap: 6px;
+			}
+			.user {
+				padding: 8px 10px;
+				border-radius: 10px;
+				background: #0f1932;
+				border: 1px solid #1c2a4c;
+				font-size: 14px;
+			}
+			.right {
+				display: grid;
+				grid-template-rows: auto 1fr auto;
+			}
+			#messages {
+				padding: 16px;
+				display: grid;
+				gap: 10px;
+				overflow-y: auto;
+				max-height: 60vh;
+			}
+			.msg {
+				display: grid;
+				gap: 4px;
+				padding: 8px 10px;
+				background: #0f1730;
+				border: 1px solid #1b2747;
+				border-radius: 12px;
+			}
+			.msg .meta {
+				font-size: 12px;
+				color: var(--muted);
+				display: flex;
+				gap: 8px;
+			}
+			.msg .text {
+				font-size: 15px;
+				line-height: 1.5;
+				white-space: pre-wrap;
+			}
+			.system {
+				color: var(--muted);
+				font-style: italic;
+				background: transparent;
+				border: none;
+				text-align: center;
+			}
+			.typing {
+				padding: 8px 16px;
+				color: var(--muted);
+				font-size: 13px;
+				min-height: 24px;
+			}
+			.input {
+				display: grid;
+				grid-template-columns: 1fr auto;
+				gap: 10px;
+				padding: 12px;
+				border-top: 1px solid #1f2740;
+				background: linear-gradient(180deg, #121a2e, #10182a);
+			}
+			input,
+			button {
+				font: inherit;
+				padding: 12px 14px;
+				border-radius: 12px;
+				border: 1px solid #23325a;
+				background: #0f1932;
+				color: var(--text);
+				outline: none;
+			}
+			input:focus {
+				border-color: #2d4b88;
+			}
+			button {
+				background: linear-gradient(135deg, #16a34a, #22c55e);
+				color: #041407;
+				border: none;
+				font-weight: 700;
+				cursor: pointer;
+				transition: transform 0.06s ease, filter 0.2s ease;
+				box-shadow: 0 6px 14px rgba(34, 197, 94, 0.25);
+			}
+			button:active {
+				transform: translateY(1px);
+				filter: brightness(0.95);
+			}
+			.join {
+				display: grid;
+				gap: 10px;
+				padding: 12px;
+				border-bottom: 1px solid #1f2740;
+				background: #10182a;
+			}
+			@media (max-width: 800px) {
+				.app {
+					grid-template-columns: 1fr;
+				}
+				.users {
+					grid-template-columns: repeat(2, minmax(0, 1fr));
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="app">
+			<section class="card left">
+				<header>👥 Đang trực tuyến</header>
+				<div class="users" id="users"></div>
+			</section>
+
+			<section class="card right">
+				<header>💬 WebSocket Chat</header>
+
+				<div class="join">
+					<form id="joinForm">
+						<div
+							style="
+								display: grid;
+								grid-template-columns: 1fr auto;
+								gap: 10px;
+							"
+						>
+							<input
+								id="name"
+								placeholder="Nhập tên hiển thị (vd: DucAnh)"
+								maxlength="32"
+								required
+							/>
+							<button type="submit">Vào phòng</button>
+						</div>
+					</form>
+				</div>
+
+				<div id="messages"></div>
+				<div class="typing" id="typing"></div>
+
+				<form class="input" id="chatForm">
+					<input
+						id="text"
+						placeholder="Nhập tin nhắn và nhấn Enter…"
+						autocomplete="off"
+					/>
+					<button type="submit">Gửi</button>
+				</form>
+			</section>
+		</div>
+
+		<script>
+			const messagesEl = document.getElementById("messages");
+			const usersEl = document.getElementById("users");
+			const typingEl = document.getElementById("typing");
+			const joinForm = document.getElementById("joinForm");
+			const chatForm = document.getElementById("chatForm");
+			const nameInput = document.getElementById("name");
+			const textInput = document.getElementById("text");
+
+			// Tạo kết nối WebSocket (cùng origin, cùng port server)
+			const protocol = location.protocol === "https:" ? "wss" : "ws";
+			const socket = new WebSocket(`${protocol}://${location.host}`);
+
+			let myName = null;
+			let typingTimer = null;
+
+			function addSystem(text) {
+				const el = document.createElement("div");
+				el.className = "msg system";
+				el.textContent = text;
+				messagesEl.appendChild(el);
+				messagesEl.scrollTop = messagesEl.scrollHeight;
+			}
+
+			function addMessage({ from, text, ts }) {
+				const wrap = document.createElement("div");
+				wrap.className = "msg";
+				const meta = document.createElement("div");
+				meta.className = "meta";
+				meta.textContent = `${from.name} • ${new Date(
+					ts
+				).toLocaleTimeString()}`;
+				const body = document.createElement("div");
+				body.className = "text";
+				body.textContent = text;
+				wrap.append(meta, body);
+				messagesEl.appendChild(wrap);
+				messagesEl.scrollTop = messagesEl.scrollHeight;
+			}
+
+			function renderUsers(users) {
+				usersEl.innerHTML = "";
+				users.forEach((u) => {
+					const el = document.createElement("div");
+					el.className = "user";
+					el.textContent = u.name;
+					usersEl.appendChild(el);
+				});
+			}
+
+			socket.addEventListener("open", () => {
+				addSystem("🟢 Đã kết nối máy chủ.");
+			});
+
+			socket.addEventListener("close", () => {
+				addSystem("🔴 Mất kết nối máy chủ.");
+			});
+
+			socket.addEventListener("message", (evt) => {
+				let data;
+				try {
+					data = JSON.parse(evt.data);
+				} catch {
+					return;
+				}
+				if (data.type === "system") return addSystem(data.text);
+				if (data.type === "online") return renderUsers(data.users);
+				if (data.type === "chat") return addMessage(data);
+				if (data.type === "typing") {
+					typingEl.textContent = `${data.from.name} đang nhập…`;
+					clearTimeout(typingTimer);
+					typingTimer = setTimeout(
+						() => (typingEl.textContent = ""),
+						1000
+					);
+				}
+			});
+
+			joinForm.addEventListener("submit", (e) => {
+				e.preventDefault();
+				if (!nameInput.value.trim()) return;
+				myName = nameInput.value.trim();
+				socket.send(JSON.stringify({ type: "join", name: myName }));
+				joinForm.querySelector("button").disabled = true;
+				nameInput.disabled = true;
+				textInput.focus();
+			});
+
+			chatForm.addEventListener("submit", (e) => {
+				e.preventDefault();
+				const text = textInput.value.trim();
+				if (!text) return;
+				socket.send(JSON.stringify({ type: "chat", text }));
+				textInput.value = "";
+				textInput.focus();
+			});
+
+			// gửi tín hiệu "typing"
+			textInput.addEventListener("input", () => {
+				if (!myName) return;
+				socket.send(JSON.stringify({ type: "typing" }));
+			});
+		</script>
+	</body>
+</html>
